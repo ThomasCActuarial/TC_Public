@@ -1,0 +1,88 @@
+#Project de TC,MB refait par TC en python.
+#%%
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import yfinance as yf
+from statsmodels.tsa.arima.model import ARIMA
+from statsmodels.stats.diagnostic import acorr_ljungbox
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+from statsmodels.tsa.stattools import adfuller
+from datetime import datetime, timedelta
+#%%
+# Magic number
+date_fin = '2023-09-17'
+date_debut = (datetime.strptime(date_fin, '%Y-%m-%d') - timedelta(days=365)).strftime('%Y-%m-%d')
+#%%
+
+CAC40 = np.log(yf.download('^FCHI', start=date_debut, end=date_fin)['Close'])
+
+# On garde les 100 dernieres valeur comme la consigne
+CAC40_Test = CAC40.iloc[-30:]
+CAC40_Train = CAC40.iloc[:-30]
+
+P_valeur = adfuller(CAC40)[1]
+print(f"p-value série brute : {P_valeur :.4f}")
+Value_Diff = CAC40_Train
+d = 0
+while P_valeur > 0.05:
+    Value_Diff = Value_Diff.diff().dropna()
+    P_valeur = adfuller(Value_Diff)[1]
+    print(f"p-value ADF série différenciée : {P_valeur:.4f}")
+    d += 1
+
+#%%
+# Trouver les autre valeur
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14,4))
+plot_acf(Value_Diff, lags=30, ax=ax1)
+plot_pacf(Value_Diff, lags=30, ax=ax2)
+plt.suptitle('ACF et PACF de la série stationnaire')
+plt.show()
+#%%
+# Au vu du résultat précedent.
+p = 2 
+q = 11
+modele = ARIMA(CAC40_Train, order=(p, d, q))
+
+resultat = modele.fit()
+print(resultat.summary())
+#%%
+plt.figure(figsize=(10,4))
+resultat.resid.plot(title='Résidus du modèle')
+plt.show()
+#%%
+
+test_lb = acorr_ljungbox(resultat.resid, lags=[10])
+print(f" Ljung-Box : {test_lb['lb_pvalue'].values[0]:.4f}")
+
+#%%
+
+
+prevision = resultat.get_forecast(steps=30)
+intervalle = prevision.conf_int()
+prev_moyenne = prevision.predicted_mean
+
+
+prev_df = pd.DataFrame({
+    'Prevision': prev_moyenne.values,
+    'IC Inf': intervalle.iloc[:,0].values,
+    'IC Sup': intervalle.iloc[:,1].values
+}, index=CAC40_Test.index)  
+
+
+plt.figure(figsize=(14,7))
+plt.plot(CAC40_Train, label='Entraînement', color='blue')
+plt.plot(CAC40_Test, label='Test réel', color='green', alpha=0.5)
+plt.plot(prev_df['Prevision'], 'r--', label='Prévision')
+plt.fill_between(prev_df.index, 
+                 prev_df['IC Inf'], 
+                 prev_df['IC Sup'], 
+                 color='pink', alpha=0.3, label='Intervalle confiance')
+plt.title('Prévision CAC 40 avec ARIMA')
+plt.xlabel('Date')
+plt.ylabel('Log(Cours)')
+plt.legend()
+plt.grid(True)
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
