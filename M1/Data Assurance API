@@ -1,0 +1,170 @@
+#Code de récupération des données pour un project d'utilisation des données en assurance, project fait par MB,LP,RH et TC
+# Le code utilise un arreter CAT pour faire la liste des commerces qui aurit put être toucher par cette CAT NAT
+# L'arreter est fournit par la CCR sur son Site
+# On utilise OPEN street map pour trouver les commerce
+# Geo API est nécessaire pour récuperer les données car les code insee sont éxact mais pas les Nom
+import time
+import requests
+import folium
+import overpy
+import random
+import numpy
+#%%
+
+# A changer pour chnager l'arreter CATNAT
+url_donnees = "https://catastrophes-naturelles.ccr.fr/c/portal/layout?p_l_id=163&_catnat_arretes_list_CatnatArretesListPortlet_INSTANCE_hBNqrpgqz1Rp_resource_action=action_download&_catnat_arretes_list_CatnatArretesListPortlet_INSTANCE_hBNqrpgqz1Rp_codeArrete=000876&p_p_cacheability=cacheLevelPage&p_p_id=catnat_arretes_list_CatnatArretesListPortlet_INSTANCE_hBNqrpgqz1Rp&p_p_lifecycle=2"
+
+
+def recuperer_nom_commune(code_insee):
+    """Récupère le nom d'une commune à partir de son code INSEE."""
+    #MERCI DE NE PAS LE RECHANGER ce paramètre. 
+    time.sleep(0.03)  # Respect des limites de l'API 
+    url_api = f'https://geo.api.gouv.fr/communes/{code_insee}'
+    reponse = requests.get(url_api)
+    if reponse.status_code == 200:
+        donnees_commune = reponse.json()
+        return donnees_commune.get('nom', 'Commune inconnue')
+    return 'Commune inconnue'
+
+def extraire_donnees_commerces(nom_commune):
+    """Extrait les données des commerces d'une commune via l'API Overpass."""
+    api_overpass = overpy.Overpass()
+    requete_overpass = f"""
+        area["name"="{nom_commune}"]->.zone_recherche;
+        (
+          node["shop"](area.zone_recherche);
+          way["shop"](area.zone_recherche);
+          relation["shop"](area.zone_recherche);
+        );
+        out body;
+        >;
+        out skel qt;
+    """
+    resultat_requete = api_overpass.query(requete_overpass)
+    liste_commerces = []
+    for element in resultat_requete.nodes + resultat_requete.ways + resultat_requete.relations:
+        nom_commerce = element.tags.get('name', 'Non spécifié')
+        type_commerce = element.tags.get('shop', 'Non spécifié')
+        coordonnees = (element.lat, element.lon) if hasattr(element, 'lat') and hasattr(element, 'lon') else None
+        if coordonnees and type_commerce != 'Non spécifié':
+            liste_commerces.append({
+                'nom': nom_commerce,
+                'type': type_commerce,
+                'coordonnees': coordonnees,
+                'commune' : nom_commune
+            })
+    return liste_commerces
+
+def generer_carte_france(liste_commerces):
+    carte = folium.Map(location=[46.6031, 1.8883], zoom_start=6)
+    
+    for commerce in liste_commerces:
+        latitude, longitude = commerce['coordonnees']
+        etiquette = f"{commerce['nom']} ({commerce['type']})"
+        folium.Marker([latitude, longitude], popup=etiquette).add_to(carte)
+    
+    carte.save("carte_commerces.html")
+    return carte
+
+
+reponse = requests.get(url_donnees)
+if reponse.status_code == 200:
+    lignes = reponse.text.splitlines()
+    compteur = 0
+    liste_tous_commerces = []
+
+    for ligne in lignes:
+        
+        
+        colonnes = ligne.split(";")
+        if len(colonnes) > 10 and colonnes[6].startswith("Inondations") and colonnes[10].startswith("R"):
+            code_insee = colonnes[0]
+            nom_commune = recuperer_nom_commune(code_insee)
+            print(f"Traitement de la commune : {nom_commune}")
+            
+            donnees_commerces = extraire_donnees_commerces(nom_commune)
+            liste_tous_commerces.extend(donnees_commerces)
+            compteur += 1
+
+    generer_carte_france(liste_tous_commerces)
+else:
+    print("Erreur lors du téléchargement des données.")
+    
+    
+    
+    
+    
+    
+#%%
+
+
+
+TypeCommerceTraiter = []
+TypeCommerceNBParCommune = {}  
+CoutParType = {} 
+ParamLoiExpParCommune = {}  
+CommercesTouchesParCommune = {}  
+CoutTotal = 0  
+
+
+communes_uniques = set(commerce['commune'] for commerce in liste_tous_commerces)
+
+for commune in communes_uniques:
+    TypeCommerceNBParCommune[commune] = {}
+    CommercesTouchesParCommune[commune] = {}
+
+for commerce in liste_tous_commerces:
+    commune = commerce['commune']
+    type_commerce = commerce['type']
+
+    if type_commerce not in TypeCommerceNBParCommune[commune]:
+        TypeCommerceNBParCommune[commune][type_commerce] = 0
+    TypeCommerceNBParCommune[commune][type_commerce] += 1
+
+
+for type_commerce in set(commerce['type'] for commerce in liste_tous_commerces):
+    CoutParType[type_commerce] = random.uniform(500, 10000)
+
+
+for commune in communes_uniques:
+    ParamLoiExpParCommune[commune] = random.uniform(1, 50)
+
+
+for commune in communes_uniques:
+    parametre_loi_exp = ParamLoiExpParCommune[commune]
+
+    for type_commerce, nombre_total in TypeCommerceNBParCommune[commune].items():
+        probabilite_touche = -(numpy.log(1 - random.uniform(0.01, 1)) / parametre_loi_exp)
+        nombre_touches = round(probabilite_touche * nombre_total)
+
+        
+        CommercesTouchesParCommune[commune][type_commerce] = nombre_touches
+
+
+for commune in communes_uniques:
+    for type_commerce, nombre_touches in CommercesTouchesParCommune[commune].items():
+        cout_unitaire = CoutParType[type_commerce]
+        cout_type = nombre_touches * cout_unitaire
+        CoutTotal += cout_type
+
+
+print(f"Coût total pour tous les commerces touchés: {CoutTotal:.2f}")
+
+
+for commune in communes_uniques:
+    print(f"\nCommune: {commune}")
+    for type_commerce, nombre_touches in CommercesTouchesParCommune[commune].items():
+        cout_unitaire = CoutParType[type_commerce]
+        cout_type = nombre_touches * cout_unitaire
+        print(f"  Type: {type_commerce}, Nombre touchés: {nombre_touches}, Coût unitaire: {cout_unitaire:.2f}, Coût total: {cout_type:.2f}")
+
+
+print(f"Coût total pour tous les commerces touchés: {CoutTotal:.2f}")    
+    
+    
+    
+    
+    
+    
+    
+    
