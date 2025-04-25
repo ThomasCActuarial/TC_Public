@@ -1,4 +1,4 @@
-#Project de TC,MB refait par TC en python.
+#Project de TC,MB refait par TC en python. Suite au cours de séries temporelle de M1 ISUP
 #%%
 import pandas as pd
 import numpy as np
